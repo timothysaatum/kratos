@@ -1,0 +1,48 @@
+# Virtual Environments
+electionenv/
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.pyc
+*.pyd
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+!alembic/versions/.gitkeep
+.env
+db.sqlite3
+# Alembic
+!alembic/versions/*.py
+alembic/versions/*.pyc
+
+# Dev credentials
+dev_credentials.txt
+db_fixtures.py
+awscliv2.zip
+
+# Test scripts and tokens
+tests/
+test_sse_client.py
+test_sse_full.py
+access_token.txt
+*.token.txt
+
+# Test artifacts (keep tests/ folder, exclude artifacts)
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.tox/
+*.cover
+
+# Editor + local environment
+.vercel
+.local/
