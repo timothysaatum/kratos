@@ -22,7 +22,7 @@ db.sqlite3
 # Alembic
 !alembic/versions/*.py
 alembic/versions/*.pyc
-
+uploads/
 # Dev credentials
 dev_credentials.txt
 db_fixtures.py
