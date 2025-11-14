@@ -43,6 +43,7 @@ app.include_router(results_router, prefix=settings.API_PREFIX)
 
 origins = [
     "http://localhost:3000",
+    "https://kratos-ui.vercel.app/"
 ]
 
 app.add_middleware(
