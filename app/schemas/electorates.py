@@ -354,7 +354,6 @@ class PortfolioOut(PortfolioBase):
 # Candidate Schemas
 class CandidateBase(BaseModel):
     name: str
-    portfolio_id: uuid.UUID
     picture_url: Optional[str] = None
     picture_filename: Optional[str] = None
     manifesto: Optional[str] = None
@@ -364,7 +363,7 @@ class CandidateBase(BaseModel):
 
 
 class CandidateCreate(CandidateBase):
-    pass
+    portfolio_id: uuid.UUID
 
 
 class CandidateUpdate(BaseModel):
@@ -391,6 +390,8 @@ class CandidateOut(CandidateBase):
 class VoteCreate(BaseModel):
     portfolio_id: uuid.UUID
     candidate_id: uuid.UUID
+
+
 
 
 class VotingCreation(BaseModel):

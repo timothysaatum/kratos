@@ -616,24 +616,7 @@ def rate_limit_auth(func):
     return wrapper
 
 
-# def rate_limit_voting(func):
-#     """Decorator to add rate limiting to voting functions"""
 
-#     @wraps(func)
-#     async def wrapper(request: Request, *args, **kwargs):
-#         device_info = DeviceFingerprinter.extract_device_info(request)
-#         client_ip = device_info.get("client_ip", "unknown")
-
-#         if voting_rate_limiter.is_rate_limited(client_ip):
-#             raise HTTPException(
-#                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-#                 detail="Too many voting attempts. Please wait before trying again.",
-#             )
-
-#         return await func(request, *args, **kwargs)
-
-
-#     return wrapper
 def rate_limit_voting(func):
     """Decorator to add rate limiting to voting functions"""
 

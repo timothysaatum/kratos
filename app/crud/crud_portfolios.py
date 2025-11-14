@@ -153,18 +153,28 @@ async def get_portfolio_with_stats(db: AsyncSession, portfolio_id: UUID) -> Opti
     }
 
 
-async def get_active_portfolios_for_voting(db: AsyncSession) -> List[Portfolio]:
-    """Get active portfolios ordered by voting order for voting interface"""
+async def get_active_portfolios_for_voting(db: AsyncSession) -> List[Candidate]:
+    """
+    Return **all active candidates** (not portfolios) ordered by:
+      1. Portfolio.voting_order
+      2. Candidate.display_order
+    """
     result = await db.execute(
-        select(Portfolio)
-        .options(selectinload(Portfolio.candidates))
+        select(Candidate)
+        .join(Portfolio, Candidate.portfolio_id == Portfolio.id)
+        .options(selectinload(Candidate.portfolio))  # load portfolio for CandidateOut
         .where(
             and_(
+                Candidate.is_active == True,
                 Portfolio.is_active == True,
-                Portfolio.candidates.any(Candidate.is_active == True)
             )
         )
-        .order_by(Portfolio.voting_order, Portfolio.name)
+        .order_by(
+            Portfolio.voting_order,
+            Portfolio.name,
+            Candidate.display_order,
+            Candidate.name
+        )
     )
     return result.scalars().all()
 

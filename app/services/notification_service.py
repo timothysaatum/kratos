@@ -38,7 +38,7 @@ class EmailService:
         self.smtp_username = os.getenv("SMTP_USERNAME")
         self.smtp_password = os.getenv("SMTP_PASSWORD")
         self.from_email = os.getenv("FROM_EMAIL", "noreply@voting-system.com")
-        self.from_name = os.getenv("FROM_NAME", "Election System")
+        self.from_name = os.getenv("FROM_NAME", "Kratos System")
 
         # Validate configuration
         if not self.smtp_username or not self.smtp_password:

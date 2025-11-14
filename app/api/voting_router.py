@@ -25,7 +25,7 @@ from app.core.database import get_db
 from app.middleware.auth_middleware import rate_limit_voting, get_current_voter
 from app.models.electorates import Electorate, VotingSession
 from app.schemas.electorates import (
-    PortfolioOut,
+    CandidateOut,
     VoteOut,
     VotingCreation,
     VotingSessionResponse,
@@ -46,7 +46,7 @@ router = APIRouter(prefix="/voting", tags=["Voting System"])
 
 
 # Voting Endpoints
-@router.get("/ballot", response_model=List[PortfolioOut])
+@router.get("/ballot", response_model=List[CandidateOut])
 async def get_voting_ballot(
     db: AsyncSession = Depends(get_db),
     electorate: Electorate = Depends(get_current_voter),

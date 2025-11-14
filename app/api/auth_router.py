@@ -15,7 +15,6 @@ from app.middleware.auth_middleware import (
     get_admin_from_env,
     get_current_admin,
     rate_limit_auth,
-    rate_limit_session,
 )
 from app.models.electorates import Electorate, VotingSession
 from app.schemas.electorates import (
@@ -228,14 +227,6 @@ async def verify_voting_id(
                             f"Warning: {registered_device.ban_count}/3 failed attempts.",
                         )
                 else:
-                    # TESTING MODE: Allow but update fingerprint and log warning
-                    print(f"TESTING MODE: Device fingerprint mismatch allowed")
-                    print(f"Stored:  {stored_fingerprint}")
-                    print(f"Current: {current_fingerprint}")
-                    print(
-                        f"Set ENFORCE_DEVICE_FINGERPRINT=true in .env for production"
-                    )
-
                     # Update to current device fingerprint
                     voting_token.device_fingerprint = current_fingerprint
                     registered_device.device_fingerprint = current_fingerprint
@@ -421,29 +412,56 @@ async def refresh_token(
     try:
         # Extract refresh token from cookie
         refresh_token_value = request.cookies.get("refresh_token")
+        print(refresh_token_value)
         if not refresh_token_value:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="No refresh token found. Please login again.",
             )
 
-        # Decode refresh token
-        payload = TokenManager.decode_token(refresh_token_value)
-        session_id = uuid.UUID(payload.get("session_id"))
-        electorate_id = uuid.UUID(payload.get("sub"))
+        # Decode refresh token with better error handling
+        try:
+            payload = TokenManager.decode_token(refresh_token_value)
+        except Exception as decode_error:
+            # Clear invalid refresh token
+            response.delete_cookie(
+                key="refresh_token",
+                path="/",
+                domain=None,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid or expired token: {str(decode_error)}",
+            )
+
+        session_id = payload.get("session_id")
+        electorate_id = payload.get("sub")
         token_type = payload.get("type")
 
         # Validate token type
         if token_type != "refresh_token":
+            response.delete_cookie(key="refresh_token", path="/", domain=None)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token type",
             )
 
         if not session_id or not electorate_id:
+            response.delete_cookie(key="refresh_token", path="/", domain=None)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token payload",
+            )
+
+        # Convert to UUID
+        try:
+            session_id = uuid.UUID(session_id)
+            electorate_id = uuid.UUID(electorate_id)
+        except (ValueError, AttributeError) as e:
+            response.delete_cookie(key="refresh_token", path="/", domain=None)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid ID format in token",
             )
 
         # Verify session is still valid
@@ -459,7 +477,7 @@ async def refresh_token(
 
         if not session or not session.is_valid:
             # Clear invalid refresh token
-            response.delete_cookie(key="refresh_token", path="/")
+            response.delete_cookie(key="refresh_token", path="/", domain=None)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Session expired or invalid. Please login again.",
@@ -489,15 +507,11 @@ async def refresh_token(
             expires_delta=timedelta(hours=24),
         )
 
-        # Update refresh token in cookie
-        response.set_cookie(
-            key="refresh_token",
-            value=new_refresh_token,
-            httponly=True,
-            secure=True,  # Set to False for local development without HTTPS
-            samesite="lax",
-            max_age=86400,  # 24 hours
-            path="/",
+        # Set refresh token cookie using the helper function
+        set_token_cookie(
+            response=response,
+            voter_token=new_refresh_token,
+            request=request
         )
 
         return TokenVerificationResponse(
@@ -512,6 +526,8 @@ async def refresh_token(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()  # Debug logging
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Token refresh failed: {str(e)}",

@@ -620,6 +620,38 @@ class SessionManager:
 class TokenManager:
     """Enhanced token management with session integration"""
 
+    # @staticmethod
+    # def create_access_token(
+    #     data: dict,
+    #     expires_delta: Optional[timedelta] = None,
+    #     session_id: Optional[UUID] = None,
+    # ) -> str:
+    #     """
+    #     Create a JWT access token with optional session reference
+    #     CHANGED: Default expiration is now 10 minutes for voting sessions
+    #     FIXED: Respects token type from data parameter
+    #     """
+
+    #     to_encode = data.copy()
+    #     expire = datetime.now(timezone.utc) + (
+    #         expires_delta or timedelta(minutes=10)  # CHANGED: Default to 10 minutes
+    #     )
+        
+    #     # Add expiration and issued-at timestamp
+    #     to_encode.update({
+    #         "exp": expire,
+    #         "iat": datetime.now(timezone.utc),
+    #     })
+        
+    #     # Only set default type if not provided in data
+    #     if "type" not in to_encode:
+    #         to_encode["type"] = "access"
+
+    #     # Include session ID if provided
+    #     if session_id:
+    #         to_encode["sid"] = str(session_id)
+
+    #     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     @staticmethod
     def create_access_token(
         data: dict,
@@ -631,25 +663,24 @@ class TokenManager:
         CHANGED: Default expiration is now 10 minutes for voting sessions
         FIXED: Respects token type from data parameter
         """
-
         to_encode = data.copy()
         expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(minutes=10)  # CHANGED: Default to 10 minutes
+            expires_delta or timedelta(minutes=10)
         )
-        
+    
         # Add expiration and issued-at timestamp
         to_encode.update({
             "exp": expire,
             "iat": datetime.now(timezone.utc),
         })
-        
+    
         # Only set default type if not provided in data
         if "type" not in to_encode:
             to_encode["type"] = "access"
 
-        # Include session ID if provided
-        if session_id:
-            to_encode["sid"] = str(session_id)
+        # Include session ID if provided (use "session_id" not "sid" for consistency)
+        if session_id and "session_id" not in to_encode:
+            to_encode["session_id"] = str(session_id)
 
         return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 

@@ -14,7 +14,14 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timezone
 from app.core.database import get_db
-from app.schemas.electorates import BulkTokenGenerationRequest, ElectorateOut, ElectionResults, SingleTokenRegenerationRequest, SingleTokenRegenerationResponse, TokenGenerationRequest, TokenGenerationResponse
+from app.schemas.electorates import (
+    BulkTokenGenerationRequest, 
+    ElectorateOut, ElectionResults, 
+    SingleTokenRegenerationRequest, 
+    SingleTokenRegenerationResponse, 
+    TokenGenerationRequest, 
+    TokenGenerationResponse
+)
 from app.services.token_generation_service import BulkTokenGenerator
 from app.services.notification_service import NotificationService
 from app.crud.crud_electorates import get_electorates, get_electorate

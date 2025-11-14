@@ -1,8 +1,8 @@
-"""Create Tables
+"""create tables
 
-Revision ID: b5f9e754d7a2
+Revision ID: a9b66a4deb96
 Revises: 
-Create Date: 2025-11-11 05:04:06.582052
+Create Date: 2025-11-14 06:16:51.223074
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'b5f9e754d7a2'
+revision = 'a9b66a4deb96'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -50,6 +50,8 @@ def upgrade() -> None:
     sa.Column('student_id', sa.String(length=50), nullable=False),
     sa.Column('program', sa.String(length=100), nullable=True),
     sa.Column('year_level', sa.Integer(), nullable=True),
+    sa.Column('phone_number', sa.String(length=20), nullable=True),
+    sa.Column('email', sa.String(length=255), nullable=True),
     sa.Column('voting_pin_hash', sa.String(length=128), nullable=False),
     sa.Column('device_fingerprint', sa.String(length=128), nullable=True),
     sa.Column('has_voted', sa.Boolean(), nullable=False),
@@ -62,6 +64,7 @@ def upgrade() -> None:
     sqlite_autoincrement=True
     )
     op.create_index(op.f('ix_students_device_fingerprint'), 'students', ['device_fingerprint'], unique=False)
+    op.create_index(op.f('ix_students_email'), 'students', ['email'], unique=False)
     op.create_index(op.f('ix_students_has_voted'), 'students', ['has_voted'], unique=False)
     op.create_index(op.f('ix_students_id'), 'students', ['id'], unique=False)
     op.create_index(op.f('ix_students_student_id'), 'students', ['student_id'], unique=True)
@@ -226,6 +229,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_students_student_id'), table_name='students')
     op.drop_index(op.f('ix_students_id'), table_name='students')
     op.drop_index(op.f('ix_students_has_voted'), table_name='students')
+    op.drop_index(op.f('ix_students_email'), table_name='students')
     op.drop_index(op.f('ix_students_device_fingerprint'), table_name='students')
     op.drop_table('students')
     op.drop_index(op.f('ix_registration_links_link_token'), table_name='registration_links')

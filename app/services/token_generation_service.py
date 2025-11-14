@@ -20,7 +20,7 @@ from app.services.notification_service import NotificationService
 
 logger = logging.getLogger(__name__)
 
-
+VOTING_URL = "http://localhost:3000/vote"
 class BulkTokenGenerator:
     """Service for generating and distributing voting tokens in bulk"""
 
@@ -35,7 +35,7 @@ class BulkTokenGenerator:
         portfolio_id: Optional[UUID] = None,
         background_tasks: BackgroundTasks = None,
         election_name: str = "Election",
-        voting_url: str = "http://localhost:8000",
+        voting_url: str = VOTING_URL,
         send_notifications: bool = True,
         notification_methods: List[str] = ["email", "sms"],
     ) -> Dict[str, Any]:
@@ -151,7 +151,7 @@ class BulkTokenGenerator:
         db: AsyncSession,
         election_name: str = "Election",
         background_tasks: BackgroundTasks = None,
-        voting_url: str = "http://localhost:8000",
+        voting_url: str = VOTING_URL,
         send_notifications: bool = True,
         notification_methods: List[str] = ["email", "sms"],
         exclude_voted: bool = True,
@@ -195,7 +195,7 @@ class BulkTokenGenerator:
         portfolio_id: UUID,
         background_tasks: BackgroundTasks = None,
         election_name: str = "Election",
-        voting_url: str = "http://localhost:8000",
+        voting_url: str = VOTING_URL,
         send_notifications: bool = True,
         notification_methods: List[str] = ["email", "sms"],
     ) -> Dict[str, Any]:
@@ -255,7 +255,7 @@ class BulkTokenGenerator:
         db: AsyncSession,
         electorate_id: UUID,
         election_name: str = "Election",
-        voting_url: str = "http://localhost:8000",
+        voting_url: str = VOTING_URL,
         send_notification: bool = True,
         notification_methods: List[str] = ["email", "sms"],
     ) -> Dict[str, Any]:
