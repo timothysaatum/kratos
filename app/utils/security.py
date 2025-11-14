@@ -777,20 +777,27 @@ class TokenManager:
 
 def set_token_cookie(response: Response, voter_token: str, request: Request = None):
     """Helper function to set refresh token cookie with proper security settings"""
-
+    
+    # Determine if we're using HTTPS
     is_secure = IS_PRODUCTION
-
     if request:
         is_secure = request.url.scheme == "https" or IS_PRODUCTION
-
+    
+    # For development (localhost), use lax
+    # For production (HTTPS), use none to allow cross-site
+    samesite_setting = "none" if is_secure else "lax"
+    
+    print(f"Setting cookie - Secure: {is_secure}, SameSite: {samesite_setting}")
+    
     response.set_cookie(
         key="refresh_token",
         value=voter_token,
         httponly=True,
         secure=is_secure,
-        samesite="none" if is_secure else "lax",
+        samesite=samesite_setting,
         max_age=60 * 60 * 24 * REFRESH_TOKEN_EXPIRE_DAYS,
-        domain=None,
+        domain=None,  # Let browser determine domain
+        path="/",  # Available for all paths
     )
 
 
