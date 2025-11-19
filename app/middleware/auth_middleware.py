@@ -1,10 +1,6 @@
 """
-Authentication Middleware for Secure Token Verification
-
-This middleware provides comprehensive token verification with device fingerprinting,
-location verification, and security checks for the voting system.
-
-FIXED: Uses HTTPBearer only (no OAuth2PasswordBearer) for clean Swagger UI
+Authentication Middleware with Multi-Role Support
+Supports: admin, ec_official, polling_agent
 """
 
 import os
@@ -21,146 +17,299 @@ from app.crud.crud_voting_tokens import get_voting_token_by_hash, update_token_u
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import hashlib
 import logging
 from functools import wraps
 from collections import defaultdict
 import time
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
 security_scheme = HTTPBearer()
 admin_security_scheme = HTTPBearer()
 
 
-class SecureAuthMiddleware:
-    """Secure authentication middleware with comprehensive verification"""
+# ============================================================================
+# MULTI-USER ENVIRONMENT CONFIGURATION
+# ============================================================================
 
-    @staticmethod
-    async def verify_voting_token(
-        request: Request, token: str, db: AsyncSession, require_location: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Comprehensive token verification with device and location checks
 
-        Args:
-            request: FastAPI request object
-            token: JWT token string
-            db: Database session
-            require_location: Whether location verification is required
+def get_all_users_from_env() -> Dict[str, dict]:
+    """
+    Parse all users from environment variables with role-based prefixes.
 
-        Returns:
-            Dictionary containing verification results and electorate data
+    FIXED: Handles commas in Argon2 hashes correctly
+    """
+    users = {}
 
-        Raises:
-            HTTPException: If verification fails
-        """
-        try:
-            # 1. Extract current device information
-            current_device_info = DeviceFingerprinter.extract_device_info(request)
-            current_fingerprint = current_device_info.get("fingerprint")
+    # Method 2: Role-specific variables (MORE RELIABLE)
+    # Admin users
+    admin_users_str = os.getenv("ADMIN_USERS", "")
+    if admin_users_str:
+        # Split by comma, but be careful of Argon2 hashes containing commas
+        # Expected format: username:$argon2id$v=19$m=65536,t=3,p=1$salt$hash
+        # Strategy: Split on comma only if followed by a username pattern (letters followed by colon)
 
-            # 2. Decode JWT token
-            try:
-                payload = TokenManager.decode_token(token)
-            except ValueError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Invalid token: {str(e)}",
-                )
+        import re
 
-            # 3. Get token from database
-            token_hash = hashlib.sha256(token.encode()).hexdigest()
-            voting_token = await get_voting_token_by_hash(db, token_hash)
+        # Split entries by looking for patterns like "username:" at the start
+        entries = re.split(r",(?=[a-zA-Z0-9_]+:)", admin_users_str)
 
-            if not voting_token:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token not found in database",
-                )
+        for user_entry in entries:
+            user_entry = user_entry.strip()
+            # Split only on the FIRST colon to separate username from hash
+            if ":" in user_entry:
+                username, password_hash = user_entry.split(":", 1)  # maxsplit=1 is KEY!
+                users[username] = {
+                    "username": username,
+                    "password_hash": password_hash,
+                    "role": "admin",
+                    "permissions": _get_permissions_for_role("admin"),
+                }
 
-            # 4. Validate token data
-            token_data = {
-                "expires_at": voting_token.expires_at,
-                "revoked": voting_token.revoked,
-                "device_fingerprint": voting_token.device_fingerprint,
-                "location_data": voting_token.location_data,
-            }
+    # EC Official users
+    ec_users_str = os.getenv("EC_OFFICIAL_USERS", "")
+    if ec_users_str:
+        import re
 
-            # Extract location from request if available
-            current_location = None
-            if require_location:
-                latitude = request.headers.get("X-Location-Latitude")
-                longitude = request.headers.get("X-Location-Longitude")
+        entries = re.split(r",(?=[a-zA-Z0-9_]+:)", ec_users_str)
 
-                if latitude and longitude:
-                    current_location = {
-                        "latitude": float(latitude),
-                        "longitude": float(longitude),
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
+        for user_entry in entries:
+            user_entry = user_entry.strip()
+            if ":" in user_entry:
+                username, password_hash = user_entry.split(":", 1)
+                users[username] = {
+                    "username": username,
+                    "password_hash": password_hash,
+                    "role": "ec_official",
+                    "permissions": _get_permissions_for_role("ec_official"),
+                }
 
-            # 5. Perform comprehensive validation
-            is_valid, reason, flags = SecurityValidator.validate_token_usage(
-                token_data, current_fingerprint, current_location
-            )
+    # Polling Agent users
+    agent_users_str = os.getenv("POLLING_AGENT_USERS", "")
+    if agent_users_str:
+        import re
 
-            if not is_valid:
-                error_detail = reason
-                if flags.get("device_mismatch"):
-                    error_detail += " (Device fingerprint mismatch)"
-                if flags.get("location_mismatch"):
-                    error_detail += " (Location mismatch)"
+        entries = re.split(r",(?=[a-zA-Z0-9_]+:)", agent_users_str)
 
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN, detail=error_detail
-                )
+        for user_entry in entries:
+            user_entry = user_entry.strip()
+            if ":" in user_entry:
+                username, password_hash = user_entry.split(":", 1)
+                users[username] = {
+                    "username": username,
+                    "password_hash": password_hash,
+                    "role": "polling_agent",
+                    "permissions": _get_permissions_for_role("polling_agent"),
+                }
 
-            # 6. Update token usage
-            await update_token_usage(db, voting_token.id)
+    # Fallback: Legacy single admin support
+    if not users:
+        legacy_admin = get_admin_from_env()
+        if legacy_admin:
+            users[legacy_admin["username"]] = legacy_admin
 
-            # 7. Get electorate information
-            electorate = voting_token.electorate
-            if not electorate:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Associated electorate not found",
-                )
+    return users
 
-            # 8. Additional security checks
-            if electorate.is_banned:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN, detail="Electorate is banned"
-                )
 
-            if electorate.is_deleted:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="Electorate not found"
-                )
+def _get_permissions_for_role(role: str) -> List[str]:
+    """Get default permissions for each role"""
+    permissions_map = {
+        "admin": [
+            "manage_portfolios",
+            "manage_candidates",
+            "manage_elections",
+            "manage_electorates",
+            "generate_tokens",
+            "view_results",
+            "manage_users",
+        ],
+        "ec_official": ["generate_tokens", "view_electorates", "verify_voters"],
+        "polling_agent": ["view_results", "view_statistics"],
+    }
+    return permissions_map.get(role, [])
 
-            # 9. Return verification results
-            return {
-                "electorate": electorate,
-                "voting_token": voting_token,
-                "device_info": current_device_info,
-                "verification_flags": flags,
-                "token_payload": payload,
-            }
 
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Token verification error: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Token verification failed",
-            )
+def get_user_by_username(username: str) -> Optional[dict]:
+    """Get user configuration by username"""
+    all_users = get_all_users_from_env()
+    return all_users.get(username)
+
+
+def get_admin_from_env() -> Optional[dict]:
+    """
+    Legacy function - Get admin credentials from environment variables.
+    Kept for backward compatibility.
+    """
+    username = os.getenv("ADMIN_USERNAME")
+    password_hash = os.getenv("ADMIN_PASSWORD_HASH")
+
+    if not username or not password_hash:
+        return None
+
+    permissions_str = os.getenv("ADMIN_PERMISSIONS", "")
+    if permissions_str:
+        permissions = [p.strip() for p in permissions_str.split(",")]
+    else:
+        permissions = _get_permissions_for_role("admin")
+
+    return {
+        "username": username,
+        "password_hash": password_hash,
+        "permissions": permissions,
+        "role": "admin",
+    }
 
 
 # ============================================================================
-# PRIMARY VOTER AUTHENTICATION DEPENDENCY
+# ADMIN/STAFF AUTHENTICATION (Multi-Role)
+# ============================================================================
+
+
+async def get_current_user(
+    db: AsyncSession = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials = Depends(admin_security_scheme),
+    request: Request = None,
+) -> dict:
+    """
+    Get current authenticated user (admin, ec_official, or polling_agent).
+
+    Returns user dict with: username, role, permissions, is_admin
+    """
+    token = credentials.credentials
+
+    print(f"Received token (first 50 chars): {token[:50]}")
+    try:
+        # Decode JWT token
+        print("Great one, I salute you")
+        payload = TokenManager.decode_token(token)
+        username = payload.get("sub")
+        role = payload.get("role")
+        token_type = payload.get("type")  # Add this line
+        print(f"Token payload: {payload}")
+        # Validate token type for admin/staff authentication
+        if token_type not in ["admin_access", "access", None]:  # Add this check
+            print("Hello")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type for admin authentication",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token does not contain username",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Verify valid role
+        if role not in ["admin", "ec_official", "polling_agent"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid user role",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Verify user exists in environment
+        user_config = get_user_by_username(username)
+        if not user_config:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found in configuration",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Verify role matches
+        if user_config["role"] != role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Role mismatch",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Log activity
+        if request:
+            device_info = DeviceFingerprinter.extract_device_info(request)
+            logger.info(
+                f"User access - Username: {username}, Role: {role}, "
+                f"IP: {device_info.get('client_ip')}, "
+                f"Endpoint: {request.url.path}"
+            )
+
+        # Return user info with is_admin flag for backward compatibility
+        return {
+            "username": username,
+            "role": role,
+            "permissions": payload.get("permissions", user_config["permissions"]),
+            "is_admin": role == "admin",  # For backward compatibility
+        }
+
+    except (JWTError, ValueError) as e:
+        logger.warning(f"Invalid authentication credentials: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+async def get_current_admin(user: dict = Depends(get_current_user)) -> dict:
+    """
+    Require admin role specifically.
+    Use this for admin-only endpoints.
+    """
+    if user["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required"
+        )
+    return user
+
+
+async def get_current_ec_official(user: dict = Depends(get_current_user)) -> dict:
+    """
+    Require ec_official role (or admin).
+    Use this for EC official endpoints.
+    """
+    if user["role"] not in ["admin", "ec_official"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="EC Official access required"
+        )
+    return user
+
+
+async def get_current_polling_agent(user: dict = Depends(get_current_user)) -> dict:
+    """
+    Require polling_agent role (or admin).
+    Use this for polling agent endpoints.
+    """
+    if user["role"] not in ["admin", "polling_agent"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Polling Agent access required",
+        )
+    return user
+
+
+def require_permission(required_permission: str):
+    """
+    Dependency factory for permission-based access control.
+    """
+
+    async def check_permission(user: dict = Depends(get_current_user)) -> dict:
+        if required_permission not in user.get("permissions", []):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing required permission: {required_permission}",
+            )
+        return user
+
+    return check_permission
+
+
+# ============================================================================
+# VOTER AUTHENTICATION (Unchanged)
 # ============================================================================
 
 
@@ -171,24 +320,16 @@ async def get_current_voter(
 ) -> Electorate:
     """
     Get current authenticated voter with enhanced session validation.
-
-    Usage in routes:
-        @router.post("/vote")
-        async def cast_vote(
-            voter: Electorate = Depends(get_current_voter)
-        ):
-            # Access voter properties directly:
-            # voter.id, voter.student_id, voter.voting_tokens, etc.
-            pass
     """
-    token = credentials.credentials  # Extract token from HTTPAuthorizationCredentials
+    token = credentials.credentials
 
     try:
-        # 1. Decode JWT token
+        # Decode JWT token
         payload = TokenManager.decode_token(token)
         electorate_id = payload.get("sub")
         session_id = payload.get("session_id")
         stored_fingerprint = payload.get("device_fingerprint")
+        token_type = payload.get("type")
 
         if electorate_id is None:
             raise HTTPException(
@@ -197,19 +338,19 @@ async def get_current_voter(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        if payload.get("type") != "access" and payload.get("type") != "voting_session":
+        # Check token type - CRITICAL FIX
+        if token_type not in ["access", "voting_session"]:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type",
+                detail="Invalid token type for voter authentication",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # 2. Get electorate with relationships
+        # Get electorate with relationships
         result = await db.execute(
             select(Electorate)
             .options(
                 selectinload(Electorate.voting_tokens),
-                # selectinload(Electorate.device_registrations),
                 selectinload(Electorate.voting_sessions),
             )
             .where(Electorate.id == UUID(electorate_id))
@@ -223,7 +364,7 @@ async def get_current_voter(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # 3. Check voter status
+        # Check voter status
         if voter.is_banned:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -238,14 +379,14 @@ async def get_current_voter(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # 4. Validate session if session ID is in token and request is available
+        # Validate session
         if session_id and request:
             session = await _validate_voter_session(
                 db, UUID(session_id), request, voter.id, stored_fingerprint
             )
             if not session:
                 logger.warning(
-                    f"Invalid session detected - Voter: {voter.id}, Session: {session_id}"
+                    f"Invalid session - Voter: {voter.id}, Session: {session_id}"
                 )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -256,204 +397,12 @@ async def get_current_voter(
         return voter
 
     except (JWTError, ValueError) as e:
-        logger.warning(f"Invalid authentication credentials: {str(e)}")
+        logger.warning(f"Invalid voter authentication: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-# ============================================================================
-# BACKWARD COMPATIBILITY
-# ============================================================================
-
-
-async def get_current_electorate_from_session(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
-    db: AsyncSession = Depends(get_db),
-) -> Electorate:
-    """
-    Backward compatibility - use get_current_voter instead
-    """
-    return await get_current_voter(db, credentials, request)
-
-
-# ============================================================================
-# ADMIN AUTHENTICATION
-# ============================================================================
-
-
-def get_admin_from_env() -> Optional[dict]:
-    """
-    Get admin credentials from environment variables.
-
-    Environment variables:
-        ADMIN_USERNAME: Admin username
-        ADMIN_PASSWORD_HASH: Argon2 hashed password
-        ADMIN_PERMISSIONS: Comma-separated list of permissions (optional)
-
-    Returns admin config or None if not configured.
-    """
-    username = os.getenv("ADMIN_USERNAME")
-    password_hash = os.getenv("ADMIN_PASSWORD_HASH")
-
-    if not username or not password_hash:
-        return None
-
-    # Get permissions from env or use defaults
-    permissions_str = os.getenv("ADMIN_PERMISSIONS", "")
-    if permissions_str:
-        permissions = [p.strip() for p in permissions_str.split(",")]
-    else:
-        # Default admin permissions
-        permissions = [
-            "manage_portfolios",
-            "manage_candidates",
-            "manage_elections",
-            "view_results",
-            "manage_electorates",
-        ]
-
-    return {
-        "username": username,
-        "password_hash": password_hash,
-        "permissions": permissions,
-        "role": "admin",
-    }
-
-
-async def get_current_admin(
-    db: AsyncSession = Depends(get_db),
-    credentials: HTTPAuthorizationCredentials = Depends(admin_security_scheme),
-    request: Request = None,
-) -> dict:
-    """
-    Get current authenticated admin user from JWT token.
-    Admin credentials are validated against environment variables.
-
-    Usage in admin routes:
-        @router.post("/portfolios")
-        async def create_portfolio(
-            admin: dict = Depends(get_current_admin),
-            portfolio_data: PortfolioCreate
-        ):
-            # Admin is authenticated and authorized
-            # Access: admin["username"], admin["permissions"]
-            pass
-    """
-    token = credentials.credentials  # Extract token from HTTPAuthorizationCredentials
-
-    try:
-        # 1. Decode JWT token
-        payload = TokenManager.decode_token(token)
-        username = payload.get("sub")
-        role = payload.get("role")
-
-        if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token does not contain username",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # Verify this is an admin token
-        if role != "admin" and role != "super_admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized as admin",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # 2. Verify admin exists in environment variables
-        admin_config = get_admin_from_env()
-        if not admin_config:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Admin not configured in environment variables",
-            )
-
-        # Verify username matches
-        if username != admin_config["username"]:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid admin username",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # 3. Log admin activity
-        if request:
-            device_info = DeviceFingerprinter.extract_device_info(request)
-            logger.info(
-                f"Admin access - Username: {username}, "
-                f"IP: {device_info.get('client_ip')}, "
-                f"Endpoint: {request.url.path}"
-            )
-
-        # 4. Return admin info
-        return {
-            "username": username,
-            "role": role,
-            "permissions": payload.get("permissions", admin_config["permissions"]),
-        }
-
-    except (JWTError, ValueError) as e:
-        logger.warning(f"Invalid admin authentication credentials: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
-def require_admin_permission(required_permission: str):
-    """
-    Dependency factory for permission-based access control.
-
-    Usage:
-        @router.delete("/portfolios/{id}")
-        async def delete_portfolio(
-            portfolio_id: str,
-            admin: dict = Depends(require_admin_permission("manage_portfolios"))
-        ):
-            # Admin has the required permission
-            pass
-    """
-
-    async def check_permission(admin: dict = Depends(get_current_admin)) -> dict:
-        if required_permission not in admin.get("permissions", []):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing required permission: {required_permission}",
-            )
-        return admin
-
-    return check_permission
-
-
-async def get_super_admin(admin: dict = Depends(get_current_admin)) -> dict:
-    """
-    Require super admin access (highest level).
-
-    Usage:
-        @router.post("/admin/create")
-        async def create_admin(
-            admin: dict = Depends(get_super_admin)
-        ):
-            # Only super admins can create other admins
-            pass
-    """
-    if admin.get("role") != "super_admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Super admin access required"
-        )
-    return admin
-
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
 
 
 async def _validate_voter_session(
@@ -463,11 +412,7 @@ async def _validate_voter_session(
     electorate_id: UUID,
     stored_fingerprint: Optional[str] = None,
 ) -> Optional[VotingSession]:
-    """
-    Validate voting session with comprehensive security checks.
-    Returns session if valid, None otherwise.
-    """
-    # Get session from database
+    """Validate voting session with comprehensive security checks."""
     result = await db.execute(
         select(VotingSession).where(VotingSession.id == session_id)
     )
@@ -476,24 +421,21 @@ async def _validate_voter_session(
     if not session:
         return None
 
-    # Check if session is valid and not expired
     expires_at = session.expires_at
     if expires_at and expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc) 
-          
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
     if not session.is_valid or expires_at < datetime.now(timezone.utc):
         if session.is_valid:
             session.terminate("Session expired")
             await db.commit()
         return None
 
-    # Verify session belongs to correct voter
     if session.electorate_id != electorate_id:
         session.terminate("Session electorate mismatch")
         await db.commit()
         return None
 
-    # Verify device fingerprint if provided
     if stored_fingerprint and request:
         current_device_info = DeviceFingerprinter.extract_device_info(request)
         current_fingerprint = current_device_info.get("fingerprint")
@@ -501,105 +443,55 @@ async def _validate_voter_session(
         if stored_fingerprint != current_fingerprint:
             session.terminate("Device fingerprint mismatch")
             await db.commit()
-            logger.warning(
-                f"Device fingerprint mismatch - Session: {session_id}, "
-                f"Voter: {electorate_id}"
-            )
             return None
 
-    # Check for suspicious activity
     if session.suspicious_activity:
         session.terminate("Suspicious activity detected")
         await db.commit()
-        logger.error(
-            f"Suspicious activity - Session: {session_id}, Voter: {electorate_id}"
-        )
         return None
 
-    # Extract current IP
     current_ip = (
         getattr(request.client, "host", "unknown")
         if request and request.client
         else "unknown"
     )
 
-    # Check for concurrent sessions
-    concurrent_sessions_result = await db.execute(
-        select(VotingSession).where(
-            VotingSession.electorate_id == electorate_id,
-            VotingSession.is_valid == True,
-            VotingSession.id != session_id,
-        )
-    )
-    concurrent_sessions = concurrent_sessions_result.scalars().all()
-
-    if concurrent_sessions:
-        # Terminate other sessions
-        for other_session in concurrent_sessions:
-            other_session.terminate("Concurrent session detected")
-        logger.warning(
-            f"Concurrent sessions detected and terminated - Voter: {electorate_id}, "
-            f"Count: {len(concurrent_sessions)}"
-        )
-
-    # Update session activity
     session.update_activity(current_ip)
-
-    # Check for excessive activity (potential bot)
-    if session.activity_count > 100:
-        session.terminate("Excessive activity detected")
-        await db.commit()
-        logger.error(
-            f"Excessive activity - Session: {session_id}, "
-            f"Count: {session.activity_count}"
-        )
-        return None
-
     await db.commit()
     return session
 
 
 # ============================================================================
-# RATE LIMITING
+# RATE LIMITING (Unchanged)
 # ============================================================================
 
 
 class RateLimiter:
-    """Simple rate limiter for authentication endpoints"""
-
     def __init__(self, max_attempts: int = 5, window_seconds: int = 300):
         self.max_attempts = max_attempts
         self.window_seconds = window_seconds
         self.attempts = defaultdict(list)
 
     def is_rate_limited(self, identifier: str) -> bool:
-        """Check if identifier is rate limited"""
         now = time.time()
-        # Clean old attempts
         self.attempts[identifier] = [
             attempt_time
             for attempt_time in self.attempts[identifier]
             if now - attempt_time < self.window_seconds
         ]
 
-        # Check if over limit
         if len(self.attempts[identifier]) >= self.max_attempts:
             return True
 
-        # Record this attempt
         self.attempts[identifier].append(now)
         return False
 
 
-# Global rate limiter instances
 auth_rate_limiter = RateLimiter(max_attempts=5, window_seconds=300)
 voting_rate_limiter = RateLimiter(max_attempts=3, window_seconds=900)
-session_rate_limiter = RateLimiter(max_attempts=10, window_seconds=60)
 
 
 def rate_limit_auth(func):
-    """Decorator to add rate limiting to authentication functions"""
-
     @wraps(func)
     async def wrapper(request: Request, *args, **kwargs):
         device_info = DeviceFingerprinter.extract_device_info(request)
@@ -616,13 +508,9 @@ def rate_limit_auth(func):
     return wrapper
 
 
-
 def rate_limit_voting(func):
-    """Decorator to add rate limiting to voting functions"""
-
     @wraps(func)
     async def wrapper(*args, **kwargs):
-        # Try to get the request object from either kwargs or args
         request = kwargs.get("request") or next(
             (a for a in args if isinstance(a, Request)), None
         )
@@ -630,41 +518,19 @@ def rate_limit_voting(func):
         if not request:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Request object not found in rate_limit_voting decorator.",
+                detail="Request object not found.",
             )
 
-        # Extract client IP or device info
         device_info = DeviceFingerprinter.extract_device_info(request)
         client_ip = device_info.get("client_ip", "unknown")
 
-        # Apply rate limiting
         if voting_rate_limiter.is_rate_limited(client_ip):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many voting attempts. Please wait before trying again.",
+                detail="Too many voting attempts. Please wait.",
             )
 
-        # Proceed with the endpoint
         return await func(*args, **kwargs)
-
-    return wrapper
-
-
-def rate_limit_session(func):
-    """Decorator to add rate limiting to session operations"""
-
-    @wraps(func)
-    async def wrapper(request: Request, *args, **kwargs):
-        device_info = DeviceFingerprinter.extract_device_info(request)
-        client_ip = device_info.get("client_ip", "unknown")
-
-        if session_rate_limiter.is_rate_limited(client_ip):
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many session requests. Please slow down.",
-            )
-
-        return await func(request, *args, **kwargs)
 
     return wrapper
 
@@ -675,13 +541,10 @@ def rate_limit_session(func):
 
 
 class SecurityAuditLogger:
-    """Security audit logging for authentication events"""
-
     @staticmethod
     def log_successful_auth(
         electorate_id: str, device_fingerprint: str, ip_address: str
     ):
-        """Log successful authentication"""
         logger.info(
             f"Successful authentication - Electorate: {electorate_id}, "
             f"Device: {device_fingerprint[:8]}..., IP: {ip_address}"
@@ -689,21 +552,25 @@ class SecurityAuditLogger:
 
     @staticmethod
     def log_failed_auth(reason: str, device_fingerprint: str, ip_address: str):
-        """Log failed authentication attempt"""
         logger.warning(
             f"Failed authentication - Reason: {reason}, "
             f"Device: {device_fingerprint[:8]}..., IP: {ip_address}"
         )
 
     @staticmethod
-    def log_security_violation(
-        violation_type: str, ip_address: str, device_fingerprint: str, details: dict
+    def log_security_event(event_type: str, details: dict):
+        logger.warning(f"Security event - Type: {event_type}, Details: {details}")
+
+    @staticmethod
+    def log_session_creation(
+        electorate_id: str,
+        ip_address: str,
+        device_fingerprint: str,
+        session_duration: int,
     ):
-        """Log security violations"""
-        logger.error(
-            f"Security violation - Type: {violation_type}, "
-            f"IP: {ip_address}, Device: {device_fingerprint[:8]}..., "
-            f"Details: {details}"
+        logger.info(
+            f"Session created - Electorate: {electorate_id}, "
+            f"IP: {ip_address}, Duration: {session_duration}min"
         )
 
     @staticmethod
@@ -714,9 +581,7 @@ class SecurityAuditLogger:
         ip_address: str,
         details: dict = None,
     ):
-        """Log admin actions for audit trail"""
         logger.info(
-            f"Admin action - Username: {admin_username}, "
-            f"Action: {action}, Resource: {resource}, "
-            f"IP: {ip_address}, Details: {details or {}}"
+            f"Admin action - User: {admin_username}, Role: {details.get('role', 'unknown')}, "
+            f"Action: {action}, Resource: {resource}, IP: {ip_address}"
         )

@@ -1,5 +1,5 @@
 """
-Token Generation Service for On-Site Voting - FIXED
+Token Generation Service for On-Site Voting
 
 Fixed the token creation to properly work with CRUD functions.
 """

@@ -32,7 +32,7 @@ from app.crud.crud_votes import (
     get_all_election_results,
     get_recent_votes_engine,
 )
-from app.middleware.auth_middleware import get_current_admin
+from app.middleware.auth_middleware import get_current_admin, get_current_user
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 # Initialize services
@@ -99,7 +99,7 @@ async def regenerate_token(
     electorate_id: uuid.UUID,
     request: SingleTokenRegenerationRequest,
     db: AsyncSession = Depends(get_db),
-    current_admin=Depends(get_current_admin),
+    current_admin=Depends(get_current_user),
 ):
     """Regenerate voting token for a specific electorate"""
     try:
@@ -158,7 +158,7 @@ async def list_voters(
     has_voted: Optional[bool] = None,
     has_token: Optional[bool] = None,
     db: AsyncSession = Depends(get_db),
-    current_admin=Depends(get_current_admin),
+    current_admin=Depends(get_current_user),
 ):
     """List voters with optional filtering"""
     try:
@@ -206,7 +206,7 @@ async def get_voter(
 @router.get("/statistics")
 async def get_election_statistics(
     db: AsyncSession = Depends(get_db),
-    current_admin=Depends(get_current_admin),
+    current_admin=Depends(get_current_user),
 ):
     """Get comprehensive election statistics"""
     try:
@@ -240,7 +240,7 @@ async def get_election_statistics(
 @router.get("/results", response_model=List[ElectionResults])
 async def get_election_results(
     db: AsyncSession = Depends(get_db),
-    current_admin=Depends(get_current_admin),
+    current_admin=Depends(get_current_user),
 ):
     """Get election results for all portfolios"""
     try:

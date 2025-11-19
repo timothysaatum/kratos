@@ -38,26 +38,36 @@ class Settings(BaseSettings):
     RELOAD: bool = True
 
     # Admin Credentials
-    ADMIN_USERNAME: Optional[str] = None
-    ADMIN_PASSWORD_HASH: Optional[str] = None  
+    # ADMIN_USERS: Optional[str] = None
+    EC_OFFICIAL_USERS: Optional[str] = None
+    POLLING_AGENT_USERS: Optional[str] = None
+    ADMIN_PASSWORD_HASH: Optional[str] = None
     ADMIN_PERMISSIONS: Optional[str] = None
     ENFORCE_DEVICE_FINGERPRINT: bool = False
 
     # SMTP/Email Settings
-    SMTP_SERVER: str = Field(default="smtp.gmail.com", description="SMTP server address")
+    SMTP_SERVER: str = Field(
+        default="smtp.gmail.com", description="SMTP server address"
+    )
     SMTP_PORT: int = Field(default=587, description="SMTP server port")
     SMTP_USERNAME: str = Field(default="", description="SMTP username/email")
     SMTP_PASSWORD: str = Field(default="", description="SMTP password/app password")
-    FROM_EMAIL: str = Field(default="noreply@voting-system.com", description="From email address")
-    FROM_NAME: str = Field(default="Election System", description="From name for emails")
-    
+    FROM_EMAIL: str = Field(
+        default="noreply@voting-system.com", description="From email address"
+    )
+    FROM_NAME: str = Field(
+        default="Election System", description="From name for emails"
+    )
+
     # SMS Settings (Optional)
-    SMS_PROVIDER: str = Field(default="twilio", description="SMS provider (twilio, africastalking, etc.)")
+    SMS_PROVIDER: str = Field(
+        default="twilio", description="SMS provider (twilio, africastalking, etc.)"
+    )
     SMS_API_KEY: Optional[str] = Field(default=None, description="SMS API key")
     SMS_API_SECRET: Optional[str] = Field(default=None, description="SMS API secret")
     SMS_FROM_NUMBER: Optional[str] = Field(default=None, description="SMS from number")
     SMS_ENABLED: bool = Field(default=False, description="Enable SMS notifications")
-    
+
     # Security
     SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
     ALGORITHM: str = "HS256"
@@ -236,6 +246,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"
 
 
 # Development Settings

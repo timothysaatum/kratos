@@ -4,6 +4,7 @@ Supports two token generation flows:
 1. Admin-generated tokens (sent via SMS/email) - device registered on first use
 2. Self-service tokens - device registered during generation
 """
+
 import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -13,7 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.middleware.auth_middleware import (
     get_admin_from_env,
+    get_all_users_from_env,
     get_current_admin,
+    get_current_user,
     rate_limit_auth,
 )
 from app.models.electorates import Electorate, VotingSession
@@ -36,7 +39,12 @@ from app.crud.crud_voting_tokens import get_voting_token_by_hash, update_token_u
 import hashlib
 from app.utils.security_audit import SecurityAuditLogger
 from app.utils.validators import validate_geolocation, validate_request_headers
-from app.utils.security import SessionManager, TokenManager, verify_password, set_token_cookie
+from app.utils.security import (
+    SessionManager,
+    TokenManager,
+    verify_password,
+    set_token_cookie,
+)
 from datetime import timedelta
 from app.middleware.auth_middleware import get_current_voter
 
@@ -64,10 +72,10 @@ async def verify_voting_id(
     """
     try:
         # Check if device fingerprint enforcement is enabled
-        enforce_device_check = (
-            os.getenv("ENFORCE_DEVICE_FINGERPRINT", "true").lower() == "true"
-        )
-
+        enforce_device_check = False
+        # (
+        #     os.getenv("ENFORCE_DEVICE_FINGERPRINT", "false").lower() == "false"
+        # )
         # 1. Validate request headers and security
         headers_valid, headers_reason = validate_request_headers(request)
         if not headers_valid:
@@ -320,11 +328,7 @@ async def verify_voting_id(
             expires_delta=timedelta(hours=24),
         )
 
-        set_token_cookie(
-            response=response, 
-            voter_token=refresh_token, 
-            request=request
-            )
+        set_token_cookie(response=response, voter_token=refresh_token, request=request)
         # Log session creation
         SecurityAuditLogger.log_session_creation(
             electorate_id=str(electorate.id),
@@ -396,6 +400,47 @@ async def logout(
         # Even if there's an error, still clear the cookie
         response.delete_cookie(key="refresh_token", path="/")
         return {"message": "Logged out successfully"}
+
+
+@router.post("/admin-refresh", response_model=AdminLoginResponse)
+async def admin_refresh(current_user: dict = Depends(get_current_user)):
+    """
+    Refresh access token for any authenticated user (admin, ec_official, polling_agent)
+
+    Requires a valid access token in Authorization header.
+    Returns a new access token with extended expiration.
+    """
+    try:
+        # Create new token with extended expiration
+        new_token = TokenManager.create_access_token(
+            data={
+                "sub": current_user["username"],
+                "role": current_user["role"],
+                "type": "admin_access",
+                "permissions": current_user["permissions"],
+            },
+            expires_delta=timedelta(hours=8),
+        )
+
+        print(
+            f"Token refreshed for user: {current_user['username']}, Role: {current_user['role']}"
+        )
+
+        return AdminLoginResponse(
+            access_token=new_token,
+            token_type="bearer",
+            expires_in=28800,
+            username=current_user["username"],
+            role=current_user["role"],
+            permissions=current_user["permissions"],
+        )
+
+    except Exception as e:
+        print(f"Token refresh failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Token refresh failed: {str(e)}",
+        )
 
 
 @router.post("/refresh", response_model=TokenVerificationResponse)
@@ -509,9 +554,7 @@ async def refresh_token(
 
         # Set refresh token cookie using the helper function
         set_token_cookie(
-            response=response,
-            voter_token=new_refresh_token,
-            request=request
+            response=response, voter_token=new_refresh_token, request=request
         )
 
         return TokenVerificationResponse(
@@ -527,6 +570,7 @@ async def refresh_token(
         raise
     except Exception as e:
         import traceback
+
         traceback.print_exc()  # Debug logging
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -592,92 +636,101 @@ async def admin_login(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Admin login endpoint - validates credentials from environment variables.
+    Multi-role login endpoint - supports admin, ec_official, and polling_agent
 
-    Required environment variables:
-    - ADMIN_USERNAME: Admin username
-    - ADMIN_PASSWORD_HASH: Argon2 hashed password
-    - ADMIN_PERMISSIONS: (Optional) Comma-separated permissions
+    Validates credentials from environment variables:
+    - ADMIN_USERS: admin123:hash,admin456:hash
+    - EC_OFFICIAL_USERS: official123:hash,official456:hash
+    - POLLING_AGENT_USERS: agent123:hash,agent456:hash
 
-    Returns JWT token for admin operations (valid for 8 hours).
+    Returns JWT token valid for 8 hours.
     """
     try:
-        # 1. Get admin config from environment variables
-        admin_config = get_admin_from_env()
+        # 1. Get all users from environment
+        all_users = get_all_users_from_env()
 
-        if not admin_config:
+        if not all_users:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Admin credentials not configured in environment variables. "
-                "Please set ADMIN_USERNAME and ADMIN_PASSWORD_HASH in .env file.",
+                detail="No users configured in environment variables. "
+                "Please set ADMIN_USERS, EC_OFFICIAL_USERS, or POLLING_AGENT_USERS in .env file.",
             )
 
-        # 2. Verify username
-        if login_data.username != admin_config["username"]:
+        # 2. Find the user by username
+        user_config = all_users.get(login_data.username)
+
+        if not user_config:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid admin credentials",
+                detail="Invalid credentials",
             )
 
         # 3. Verify password against hash from environment
         try:
-            if not verify_password(admin_config["password_hash"], login_data.password):
+            if not verify_password(user_config["password_hash"], login_data.password):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid admin credentials",
+                    detail="Invalid credentials",
                 )
         except Exception as e:
+            # Log the error for debugging but don't expose details
+            print(f"Password verification error: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid admin credentials",
+                detail="Invalid credentials",
             )
 
-        # 4. Create admin JWT token with 8 hour expiration
+        # 4. Create JWT token with 8 hour expiration
         access_token = TokenManager.create_access_token(
             data={
-                "sub": login_data.username,
-                "role": "admin",
-                "type": "admin_access",
-                "permissions": admin_config["permissions"],
+                "sub": user_config["username"],  # Use username from config
+                "role": user_config["role"],
+                "type": "admin_access",  # Generic type for all staff
+                "permissions": user_config["permissions"],
             },
             expires_delta=timedelta(hours=8),
         )
 
-        # 5. Log admin login
+        # 5. Log the login
         device_info = DeviceFingerprinter.extract_device_info(request)
+        SecurityAuditLogger.log_security_event(
+            event_type=f"Admin login: {user_config["username"]}",
+            details={
+                "success": True,
+                "role": user_config["role"],
+                "action": "login",
+                "resource": "auth",
+                "ip_address": device_info.get("client_ip"),
+            },
+        )
 
-        from app.middleware.auth_middleware import SecurityAuditLogger
-
-        SecurityAuditLogger.log_admin_action(
-            admin_username=login_data.username,
-            action="login",
-            resource="admin_auth",
-            ip_address=device_info.get("client_ip"),
-            details={"success": True},
+        print(
+            f"User logged in - Username: {user_config['username']}, Role: {user_config['role']}"
         )
 
         return AdminLoginResponse(
             access_token=access_token,
             token_type="bearer",
             expires_in=28800,  # 8 hours in seconds
-            username=login_data.username,
-            role="admin",
-            permissions=admin_config["permissions"],
+            username=user_config["username"],
+            role=user_config["role"],
+            permissions=user_config["permissions"],
         )
 
     except HTTPException:
         raise
     except Exception as e:
+        print(f"Login failed with error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Admin login failed: {str(e)}",
+            detail=f"Login failed: {str(e)}",
         )
 
 
 @router.post("/admin/logout")
 async def admin_logout(
     request: Request,
-    admin: dict = Depends(get_current_admin),
+    admin: dict = Depends(get_current_user),
 ):
     """
     Admin logout endpoint.
@@ -702,21 +755,20 @@ async def admin_logout(
         return {"message": "Logged out"}
 
 
-@router.get("/admin/verify", response_model=AdminVerifyResponse)
-async def verify_admin_token(
-    admin: dict = Depends(get_current_admin),
-):
+@router.get("/admin/verify")
+async def verify_token(current_user: dict = Depends(get_current_user)):
     """
-    Verify admin token validity.
+    Verify current token and return user info
 
-    Returns admin information if token is valid.
+    Useful for checking if token is still valid and getting current user details.
     """
-    return AdminVerifyResponse(
-        valid=True,
-        username=admin["username"],
-        role=admin["role"],
-        permissions=admin["permissions"],
-    )
+    return {
+        "valid": True,
+        "username": current_user["username"],
+        "role": current_user["role"],
+        "permissions": current_user["permissions"],
+        "is_admin": current_user["is_admin"],
+    }
 
 
 @router.post("/generate-password-hash", response_model=PasswordHashResponse)

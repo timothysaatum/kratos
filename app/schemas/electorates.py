@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -392,8 +392,6 @@ class VoteCreate(BaseModel):
     candidate_id: uuid.UUID
 
 
-
-
 class VotingCreation(BaseModel):
     votes: List[VoteCreate]
 
@@ -462,19 +460,57 @@ class AdminLoginRequest(BaseModel):
 
 
 class AdminLoginResponse(BaseModel):
-    access_token: str
-    token_type: str
-    expires_in: int
-    username: str
-    role: str
-    permissions: list[str]
+    """Response for admin/staff login"""
+
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: int = Field(..., description="Token expiration in seconds")
+    username: str = Field(..., description="Username of logged in user")
+    role: str = Field(
+        ..., description="User role: admin, ec_official, or polling_agent"
+    )
+    permissions: List[str] = Field(default_factory=list, description="User permissions")
+    is_admin: bool = Field(
+        default=False,
+        description="Whether user has admin role (backward compatibility)",
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "token_type": "bearer",
+                "expires_in": 28800,
+                "username": "admin123",
+                "role": "admin",
+                "permissions": ["manage_portfolios", "manage_candidates"],
+                "is_admin": True,
+            }
+        }
 
 
 class AdminVerifyResponse(BaseModel):
-    valid: bool
-    username: str
-    role: str
-    permissions: list[str]
+    """Response for token verification"""
+
+    valid: bool = Field(..., description="Whether token is valid")
+    username: str = Field(..., description="Username from token")
+    role: str = Field(..., description="User role from token")
+    permissions: List[str] = Field(default_factory=list, description="User permissions")
+    is_admin: bool = Field(
+        default=False,
+        description="Whether user has admin role (backward compatibility)",
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "valid": True,
+                "username": "admin123",
+                "role": "admin",
+                "permissions": ["manage_portfolios"],
+                "is_admin": True,
+            }
+        }
 
 
 class PasswordHashResponse(BaseModel):
