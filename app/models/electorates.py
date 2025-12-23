@@ -5,7 +5,6 @@ from sqlalchemy import (
     TIMESTAMP,
     func,
     Text,
-    Float,
     ForeignKey,
     JSON,
 )
@@ -18,10 +17,7 @@ from typing import Optional, Dict, Any
 
 class Electorate(Base):
     __tablename__ = "students"
-    __table_args__ = (
-        # Index for fast lookup, especially for authentication
-        {"sqlite_autoincrement": True},
-    )
+    __table_args__ = ({"sqlite_autoincrement": True},)
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4, index=True
@@ -33,9 +29,7 @@ class Electorate(Base):
     year_level: Mapped[int] = mapped_column(Integer, nullable=True)
     phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    # Store hashed voting_pin for security
     voting_pin_hash: Mapped[str] = mapped_column(String(128), nullable=False)
-    # Store device fingerprint for anti-impersonation
     device_fingerprint: Mapped[str | None] = mapped_column(
         String(128), nullable=True, index=True
     )
@@ -53,6 +47,7 @@ class Electorate(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    
     # Relationships
     voting_tokens: Mapped[list["VotingToken"]] = relationship(
         "VotingToken", back_populates="electorate"
@@ -65,18 +60,65 @@ class Electorate(Base):
     )
 
     @property
+    def voting_token(self) -> Optional[str]:
+        
+        if not self.voting_tokens:
+            return None
+        
+        # Get current time (timezone-aware)
+        now = datetime.now(timezone.utc)
+        
+        try:
+            active_tokens = []
+            for token in self.voting_tokens:
+                # Skip revoked or inactive tokens
+                if token.revoked or not token.is_active:
+                    continue
+                
+                # Handle timezone comparison safely
+                expires_at = token.expires_at
+                
+                # If expires_at is timezone-naive, make it timezone-aware (assume UTC)
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                
+                # Compare
+                if expires_at > now:
+                    active_tokens.append(token)
+            
+            return "GENERATED" if active_tokens else None
+            
+        except Exception as e:
+            # Log the error but don't break the API
+            print(f"Error checking voting token for {self.student_id}: {e}")
+            return None
+    
+    @property
     def get_token_hash(self):
         """Get the most recent active voting token hash for this electorate"""
         if self.voting_tokens:
-            # Find the most recent active token
-            active_tokens = [
-                token
-                for token in self.voting_tokens
-                if not token.revoked and token.is_active
-            ]
+            now = datetime.now(timezone.utc)
+            active_tokens = []
+            
+            for token in self.voting_tokens:
+                if token.revoked or not token.is_active:
+                    continue
+                
+                expires_at = token.expires_at
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                
+                if expires_at > now:
+                    active_tokens.append(token)
+            
             if active_tokens:
                 return active_tokens[-1].token_hash
         return None
+
+    @property
+    def has_token(self) -> bool:
+        """Check if the electorate has any active voting tokens"""
+        return self.voting_token is not None
 
 
 class VotingToken(Base):

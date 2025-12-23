@@ -202,59 +202,6 @@ async def upload_candidate_picture(
         )
 
 
-# @router.get("", response_model=List[CandidateOut])
-# async def list_candidates(
-#     current_admin = Depends(get_current_admin),
-#     skip: int = 0,
-#     limit: int = 100,
-#     portfolio_id: Optional[UUID] = None,
-#     active_only: bool = True,
-#     search: Optional[str] = None,
-#     db: AsyncSession = Depends(get_db),
-# ):
-#     """List candidates with optional filtering"""
-#     try:
-#         if search:
-#             candidates = await search_candidates(
-#                 db, search_term=search, portfolio_id=portfolio_id, limit=limit
-#             )
-#         elif portfolio_id:
-#             candidates = await get_candidates_by_portfolio(
-#                 db, portfolio_id=portfolio_id, active_only=active_only
-#             )
-#         else:
-#             candidates = await get_candidates(
-#                 db, skip=skip, limit=limit, active_only=active_only
-#             )
-#         return candidates
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Failed to retrieve candidates: {str(e)}",
-#         )
-
-
-# @router.get("/{candidate_id}", response_model=CandidateOut)
-# async def get_candidate(
-#     candidate_id: UUID,
-#     db: AsyncSession = Depends(get_db),
-#     current_admin = Depends(get_current_admin)
-#     ):
-#     """Get a specific candidate"""
-#     try:
-#         candidate = await get_candidate_engine(db, candidate_id)
-#         if not candidate:
-#             raise HTTPException(
-#                 status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found"
-#             )
-#         return candidate
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Failed to retrieve candidate: {str(e)}",
-#         )
 @router.get("", response_model=List[CandidateOut])
 async def list_candidates(
     skip: int = 0,

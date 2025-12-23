@@ -57,6 +57,7 @@ async def create_electorate_route(
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_current_admin)
 ):
+    print(electorate)
     return await create_electorate(db, electorate)
 
 

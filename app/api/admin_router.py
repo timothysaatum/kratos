@@ -1,12 +1,3 @@
-"""
-Admin Router for Election Management
-
-This router handles administrative operations including:
-- Bulk token generation
-- Voter management
-- Election monitoring
-- Voting station management
-"""
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -151,7 +142,7 @@ async def generate_tokens_for_portfolio(
         )
 
 # Voter Management Endpoints
-@router.get("/voters", response_model=List[ElectorateOut])
+@router.get("/voters")
 async def list_voters(
     skip: int = 0,
     limit: int = 100,

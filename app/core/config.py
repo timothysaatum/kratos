@@ -50,8 +50,8 @@ class Settings(BaseSettings):
         default="smtp.gmail.com", description="SMTP server address"
     )
     SMTP_PORT: int = Field(default=587, description="SMTP server port")
-    SMTP_USERNAME: str = Field(default="", description="SMTP username/email")
-    SMTP_PASSWORD: str = Field(default="", description="SMTP password/app password")
+    # SMTP_USERNAME: str = Field(default="", description="SMTP username/email")
+    # SMTP_PASSWORD: str = Field(default="", description="SMTP password/app password")
     FROM_EMAIL: str = Field(
         default="noreply@voting-system.com", description="From email address"
     )

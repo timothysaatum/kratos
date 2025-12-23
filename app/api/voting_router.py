@@ -1,13 +1,3 @@
-"""
-Voting System Router
-
-This router handles all voting-related operations including:
-- Portfolio management
-- Candidate management
-- Vote casting
-- Election results
-"""
-
 from uuid import UUID
 from fastapi import (
     APIRouter,

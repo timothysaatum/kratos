@@ -1,10 +1,3 @@
-"""
-Flexible JWT Authentication Router with Auto Device Registration
-Supports two token generation flows:
-1. Admin-generated tokens (sent via SMS/email) - device registered on first use
-2. Self-service tokens - device registered during generation
-"""
-
 import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -13,9 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.middleware.auth_middleware import (
-    get_admin_from_env,
     get_all_users_from_env,
-    get_current_admin,
     get_current_user,
     rate_limit_auth,
 )
@@ -23,7 +14,6 @@ from app.models.electorates import Electorate, VotingSession
 from app.schemas.electorates import (
     AdminLoginRequest,
     AdminLoginResponse,
-    AdminVerifyResponse,
     PasswordHashResponse,
     TokenVerificationRequest,
     TokenVerificationResponse,
@@ -263,8 +253,6 @@ async def verify_voting_id(
                         # Testing: just log warning
                         print(f"TESTING MODE: Location mismatch allowed: {geo_reason}")
 
-        # 8. Validate token (expiry/revoked) - applies to both scenarios
-        # Make sure expires_at is timezone-aware
         from datetime import timezone
 
         expires_at = voting_token.expires_at

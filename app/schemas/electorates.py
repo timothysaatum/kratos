@@ -147,6 +147,8 @@ class ElectorateOut(ElectorateBase):
     created_at: datetime
     updated_at: datetime
 
+    voting_token: Optional[str] = None
+
     model_config = ConfigDict(from_attributes=True)
 
 
