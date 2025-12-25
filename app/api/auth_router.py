@@ -225,10 +225,25 @@ async def verify_voting_id(
                             f"Warning: {registered_device.ban_count}/3 failed attempts.",
                         )
                 else:
-                    # Update to current device fingerprint
-                    voting_token.device_fingerprint = current_fingerprint
-                    registered_device.device_fingerprint = current_fingerprint
-                    registered_device.device_info = current_device_info
+                    # TESTING MODE: allow reassignment but avoid unique constraint conflicts
+                    # If another registration already exists with `current_fingerprint`, link to it
+                    existing_device = await get_device_registration_by_fingerprint(
+                        db, current_fingerprint
+                    )
+
+                    if existing_device and existing_device.id != registered_device.id:
+                        # Use the existing registration record instead of overwriting
+                        voting_token.device_fingerprint = current_fingerprint
+                        # Ensure the existing registration references this electorate if missing
+                        if not existing_device.electorate_id:
+                            existing_device.electorate_id = voting_token.electorate_id
+                        existing_device.device_info = current_device_info
+                    else:
+                        # Safe to update the current registration fingerprint
+                        voting_token.device_fingerprint = current_fingerprint
+                        registered_device.device_fingerprint = current_fingerprint
+                        registered_device.device_info = current_device_info
+
                     await db.commit()
 
             # 7. Validate geolocation if provided (for returning voters)

@@ -61,33 +61,34 @@ class Electorate(Base):
 
     @property
     def voting_token(self) -> Optional[str]:
-        
-        if not self.voting_tokens:
+        # Avoid triggering lazy-load / IO when accessed by pydantic outside async context
+        tokens = self.__dict__.get("voting_tokens")
+        if tokens is None:
             return None
-        
+
         # Get current time (timezone-aware)
         now = datetime.now(timezone.utc)
-        
+
         try:
             active_tokens = []
-            for token in self.voting_tokens:
+            for token in tokens:
                 # Skip revoked or inactive tokens
                 if token.revoked or not token.is_active:
                     continue
-                
+
                 # Handle timezone comparison safely
                 expires_at = token.expires_at
-                
+
                 # If expires_at is timezone-naive, make it timezone-aware (assume UTC)
                 if expires_at.tzinfo is None:
                     expires_at = expires_at.replace(tzinfo=timezone.utc)
-                
+
                 # Compare
                 if expires_at > now:
                     active_tokens.append(token)
-            
+
             return "GENERATED" if active_tokens else None
-            
+
         except Exception as e:
             # Log the error but don't break the API
             print(f"Error checking voting token for {self.student_id}: {e}")
@@ -96,28 +97,35 @@ class Electorate(Base):
     @property
     def get_token_hash(self):
         """Get the most recent active voting token hash for this electorate"""
-        if self.voting_tokens:
-            now = datetime.now(timezone.utc)
-            active_tokens = []
-            
-            for token in self.voting_tokens:
-                if token.revoked or not token.is_active:
-                    continue
-                
-                expires_at = token.expires_at
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
-                
-                if expires_at > now:
-                    active_tokens.append(token)
-            
-            if active_tokens:
-                return active_tokens[-1].token_hash
+        tokens = self.__dict__.get("voting_tokens")
+        if not tokens:
+            return None
+
+        now = datetime.now(timezone.utc)
+        active_tokens = []
+
+        for token in tokens:
+            if token.revoked or not token.is_active:
+                continue
+
+            expires_at = token.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+            if expires_at > now:
+                active_tokens.append(token)
+
+        if active_tokens:
+            return active_tokens[-1].token_hash
+
         return None
 
     @property
     def has_token(self) -> bool:
         """Check if the electorate has any active voting tokens"""
+        # Avoid calling voting_token which may trigger IO; use __dict__ check
+        if self.__dict__.get("voting_tokens") is None:
+            return False
         return self.voting_token is not None
 
 
