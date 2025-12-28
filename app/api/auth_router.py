@@ -67,12 +67,12 @@ async def verify_voting_id(
         #     os.getenv("ENFORCE_DEVICE_FINGERPRINT", "false").lower() == "false"
         # )
         # 1. Validate request headers and security
-        headers_valid, headers_reason = validate_request_headers(request)
-        if not headers_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Security validation failed: {headers_reason}",
-            )
+        # headers_valid, headers_reason = validate_request_headers(request)
+        # if not headers_valid:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail=f"Security validation failed: {headers_reason}",
+        #     )
 
         # 2. Extract current device information
         current_device_info = DeviceFingerprinter.extract_device_info(request)
