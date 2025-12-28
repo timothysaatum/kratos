@@ -203,8 +203,8 @@ async def get_candidate_statistics(db: AsyncSession) -> dict:
 
 
 async def search_candidates(
-    db: AsyncSession, 
-    search_term: str, 
+    db: AsyncSession,
+    search_term: str,
     portfolio_id: Optional[UUID] = None,
     limit: int = 20
 ) -> List[Candidate]:
